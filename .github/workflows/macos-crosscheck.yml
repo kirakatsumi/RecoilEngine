@@ -39,7 +39,7 @@ jobs:
             runs-on: macos-15
           - target: amd64-macos
             runs-on: macos-15-intel
-            ai-exclude: "|BARb"
+            ai-exclude: "|BARb|CircuitAI"
     name: Build ${{ matrix.system.target }} engine
     runs-on: ${{ matrix.system.runs-on }}
     env:
