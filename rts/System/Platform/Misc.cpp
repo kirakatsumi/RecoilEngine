@@ -714,6 +714,12 @@ namespace Platform
 			LOG("[%s] error: \"%s\" %s (%d)", __func__, args[0].c_str(), execError, errno);
 		}
 
+		#ifndef _WIN32
+		// only the forked child gets here; never let it return into the engine
+		if (asSubprocess)
+			_exit(EXIT_FAILURE);
+		#endif
+
 		#undef EXECVP
 
 		return execError;

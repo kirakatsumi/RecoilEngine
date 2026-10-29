@@ -100,7 +100,7 @@ FILESYSTEM_TEST_CASE("ExecuteProcess executes the subprocess child")
 	args[1] = "/C";
 	args[2] = "type nul > \"" + marker + "\"";
 	#else
-	args[0] = "/bin/touch";
+	args[0] = "touch"; // /bin/touch does not exist on macOS; execvp searches PATH
 	args[1] = marker;
 	#endif
 
