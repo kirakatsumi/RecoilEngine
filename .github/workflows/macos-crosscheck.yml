@@ -66,10 +66,6 @@ jobs:
             -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG"
       - name: Compile
         run: cmake --build out --target install
-      - name: Unit tests
-        run: |
-          cmake --build out --target tests
-          ctest --test-dir out --output-on-failure --timeout 300
       - name: Package
         run: |
           base_name="recoil_$(git -C src describe --abbrev=7)_${{ matrix.system.target }}"
@@ -81,9 +77,18 @@ jobs:
           name: engine-artifacts-${{ matrix.system.target }}
           path: ./artifacts
           compression-level: 0
+      - name: Unit tests
+        # After packaging, so the synctest still gets the engine if a test
+        # fails. Retries only absorb timing flakes on shared runners
+        # (testSpringTime asserts a 500 ms sleep takes at most 550 ms).
+        run: |
+          cmake --build out --target tests
+          ctest --test-dir out --output-on-failure --timeout 300 --repeat until-pass:3
 
   synctest:
     needs: build-macos
+    # A unit-test failure in build-macos must not hide the synctest result.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 30
     strategy:
