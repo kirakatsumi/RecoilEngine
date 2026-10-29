@@ -15,6 +15,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tools/sync-test builds rts/lib/streflop
+          submodules: true
 
       - name: Configure
         run: cmake -B build -S tools/sync-test -DCMAKE_BUILD_TYPE=Release -DSTREFLOP_MODE=SSE
@@ -75,6 +78,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tools/sync-test builds rts/lib/streflop
+          submodules: true
 
       - name: Configure
         run: cmake -B build -S tools/sync-test -DCMAKE_BUILD_TYPE=Release -DSTREFLOP_MODE=${{ matrix.mode }}
