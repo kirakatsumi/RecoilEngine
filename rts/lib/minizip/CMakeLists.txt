@@ -8,6 +8,10 @@ if     (MINIZIP_FOUND)
 	message(STATUS "Using minizip library: ${MINIZIP_LIBRARY}")
 
 	set_global(SPRING_MINIZIP_INCLUDE_DIR "${MINIZIP_INCLUDE_DIR}")
+	# A system minizip can live in a shared prefix such as Homebrew's
+	# /opt/homebrew/include, next to other libraries' headers (fmt, ...).
+	# Added as SYSTEM, it is searched after -I, so it can't shadow bundled libs.
+	set_global(SPRING_MINIZIP_INCLUDE_SYSTEM SYSTEM)
 	set_global(SPRING_MINIZIP_LIBRARY "${MINIZIP_LIBRARY}")
 else   (MINIZIP_FOUND)
 	# Build our own minizip library
@@ -26,5 +30,6 @@ else   (MINIZIP_FOUND)
 	set_target_properties(minizip PROPERTIES COMPILE_FLAGS "${PIC_FLAG}")
 
 	set_global(SPRING_MINIZIP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/rts/lib")
+	set_global(SPRING_MINIZIP_INCLUDE_SYSTEM "")
 	set_global(SPRING_MINIZIP_LIBRARY minizip)
 endif  (MINIZIP_FOUND)
