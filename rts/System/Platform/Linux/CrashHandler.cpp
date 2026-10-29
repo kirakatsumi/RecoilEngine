@@ -707,9 +707,23 @@ namespace CrashHandler
 	{
 		assert(iparray != nullptr);
 
+#if defined(__APPLE__)
+		stacktrace.clear();
+		stacktrace.reserve(MAX_STACKTRACE_DEPTH);
+
+		const int numFrames = backtrace(iparray, MAX_STACKTRACE_DEPTH);
+		for (int i = 0; i < numFrames; ++i) {
+			stacktrace.emplace_back();
+			StackFrame& frame = stacktrace.back();
+			frame.ip = iparray[i];
+			frame.level = i;
+			frame.mangled = "UNW_ENOINFO";
+		}
+		return numFrames;
+#else
 		unw_cursor_t cursor;
 
-#if (defined(__arm__) || defined(__aarch64__) || defined(__APPLE__))
+#if (defined(__arm__) || defined(__aarch64__))
 		// ucontext_t and unw_context_t are not aliases here
 		unw_context_t thisctx;
 		unw_getcontext(&thisctx);
@@ -742,7 +756,7 @@ namespace CrashHandler
 		}
 		*/
 
-#if (defined(__arm__) || defined(__aarch64__) || defined(__APPLE__))
+#if (defined(__arm__) || defined(__aarch64__))
 		const int err = unw_init_local(&cursor, &thisctx);
 #else
 		const int err = unw_init_local(&cursor, uc);
@@ -772,6 +786,7 @@ namespace CrashHandler
 		}
 
 		return (int(stacktrace.size()));
+#endif
 	}
 
 

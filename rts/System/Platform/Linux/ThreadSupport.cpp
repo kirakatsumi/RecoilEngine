@@ -42,7 +42,13 @@ enum LinuxThreadState {
  * There is no glibc wrapper for this system call, so you have to write one:
  */
 static int gettid() {
+#if defined(__APPLE__)
+	uint64_t tid = 0;
+	pthread_threadid_np(nullptr, &tid);
+	return static_cast<int>(tid);
+#else
 	return syscall(SYS_gettid);
+#endif
 }
 
 /**

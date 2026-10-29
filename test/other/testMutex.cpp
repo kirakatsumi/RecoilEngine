@@ -21,6 +21,10 @@
 	#include <sys/futex.h>
 #endif
 
+#ifdef __APPLE__
+	#include <os/lock.h>
+#endif
+
 #ifndef _WIN32
 	#include <unistd.h>
 #endif
@@ -33,7 +37,7 @@
 
 InitSpringTime ist;
 
-#ifndef _WIN32
+#if defined(__linux__) || defined(__OpenBSD__)
 	typedef uint32_t lock;
 
 	static inline long do_futex (uint32_t *mtx, int op, uint32_t value, const struct timespec *timeout)
@@ -114,11 +118,14 @@ TEST_CASE("Mutex")
 	spring_time tSRMtx = Test("std::recursive_mutex", [&]{ srmtx.lock(); }, [&]{ srmtx.unlock(); });
 #endif
 
-#ifndef _WIN32
+#if defined(__linux__) || defined(__OpenBSD__)
 	lock ftx;
 	futex_init(&ftx);
 	spring_time tCrit = Test("futex", [&]{ futex_lock(&ftx); }, [&]{ futex_unlock(&ftx); });
 	futex_init(&ftx);
+#elif defined(__APPLE__)
+	os_unfair_lock oul = OS_UNFAIR_LOCK_INIT;
+	spring_time tCrit = Test("os_unfair_lock", [&]{ os_unfair_lock_lock(&oul); }, [&]{ os_unfair_lock_unlock(&oul); });
 #endif
 
 #ifdef _WIN32

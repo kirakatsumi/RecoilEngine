@@ -57,23 +57,20 @@ static void TranslateStackTrace(StackTrace& stacktrace, const int logLevel)
 
 	for (StackFrame& stackFrame: stacktrace) {
 		Dl_info info;
-		stackFrame.addr = (dladdr(stackFrame.ip, &info) != 0) ? (uintptr_t)info.dli_fbase : INVALID_ADDR_INDICATOR;
-
-		// Find library path
-		// http://stackoverflow.com/questions/8240436/filename-of-memory-mapped-libraries-osx
-		// Parsing output of vmmap will be a pain as it doesn't flush buffers (fgets hangs).
-		// Painful workaround http://www.programmingforums.org/thread36915-2.html
-		char path[PATH_MAX + 1];
-		const int count = proc_regionfilename(pid, (uintptr_t)stackFrame.ip, path, sizeof(path) - 1);
-		if (count > 0) {
-			path[count] = '\0';
-			stackFrame.path = path;
+		if (dladdr(stackFrame.ip, &info) != 0) {
+			stackFrame.addr = reinterpret_cast<uintptr_t>(info.dli_fbase);
+			if (info.dli_fname != nullptr && info.dli_fname[0] != '\0') {
+				stackFrame.path = info.dli_fname;
+			} else {
+				stackFrame.path = "";
+			}
 		} else {
-			// dyld_shared_cache ? whats that ?
+			stackFrame.addr = INVALID_ADDR_INDICATOR;
 			stackFrame.path = "";
 		}
 
-		LOG_L(L_DEBUG, "\tsymbol = \"%s\", path = \"%s\", addr = %p", stackFrame.symbol.c_str(), path, stackFrame.ip);
+		LOG_L(L_DEBUG, "\tsymbol = \"%s\", path = \"%s\", addr = %p",
+		      stackFrame.symbol.c_str(), stackFrame.path.c_str(), stackFrame.ip);
 	}
 
 	LOG_L(L_DEBUG, "[%s][2]", __func__);

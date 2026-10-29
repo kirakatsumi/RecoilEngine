@@ -44,7 +44,20 @@ if    (NOT NO_SOUND)
 			OpenAL/VorbisShared.cpp
 		)
 
-	find_package_static(OpenAL 1.18.2 REQUIRED)
+	if    (APPLE)
+		# Homebrew openal-soft is keg-only; prioritize OpenALConfig.cmake over deprecated SDK framework
+		find_package(OpenAL CONFIG QUIET PATHS "/opt/homebrew/opt/openal-soft" "/usr/local/opt/openal-soft")
+		if    (NOT OpenAL_FOUND)
+			set(CMAKE_FIND_FRAMEWORK_SAVED ${CMAKE_FIND_FRAMEWORK})
+			set(CMAKE_FIND_FRAMEWORK NEVER)
+			find_package(OpenAL REQUIRED PATHS "/opt/homebrew/opt/openal-soft" "/usr/local/opt/openal-soft")
+			set(CMAKE_FIND_FRAMEWORK ${CMAKE_FIND_FRAMEWORK_SAVED})
+		endif ()
+		include_directories(/opt/homebrew/opt/openal-soft/include /opt/homebrew/opt/openal-soft/include/AL)
+		include_directories(/usr/local/opt/openal-soft/include /usr/local/opt/openal-soft/include/AL)
+	else  (APPLE)
+		find_package_static(OpenAL 1.18.2 REQUIRED)
+	endif (APPLE)
 	find_package_static(OggVorbis 1.3.4 REQUIRED)
 
 	find_package(SDL2 MODULE REQUIRED)

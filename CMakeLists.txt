@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.27)
+# Nothing here uses C++20 modules; CMake >= 3.28 would otherwise try to scan
+# for them, which Apple clang does not support.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +91,7 @@ endif (WIN32)
 
 # XCode
 if    (APPLE)
+	list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew" "/opt/homebrew/opt/openal-soft" "/usr/local" "/usr/local/opt/openal-soft")
 	option(MACOSX_BUNDLE "Compile spring to work as a Bundle.app" TRUE)
 	add_definitions(${PIC_FLAG})
 	if    (MACOSX_BUNDLE)
@@ -507,6 +511,7 @@ elseif (MSVC)
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
 	# Clang on ARM64: no SSE flags needed, use armv8-a with NEON SIMD
 	if (IS_ARM64_BUILD)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${FP_CONTRACT_FLAG}")
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FP_CONTRACT_FLAG}")
 	else()
 		# Clang on x86_64: use SSE like GCC

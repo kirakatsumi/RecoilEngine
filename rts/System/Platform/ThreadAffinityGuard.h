@@ -3,8 +3,12 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+// Darwin kernel manages thread scheduling dynamically across asymmetric cores.
+#include <sys/types.h>
 #else
 #include <sched.h>
+#include <sys/types.h>
 #endif
 
 class ThreadAffinityGuard {
@@ -12,6 +16,8 @@ private:
 #ifdef _WIN32
 	DWORD_PTR savedAffinity;
 	HANDLE threadHandle;
+#elif defined(__APPLE__)
+	// No-op on macOS
 #else
 	cpu_set_t savedAffinity;
 	pid_t tid;
