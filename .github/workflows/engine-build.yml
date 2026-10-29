@@ -223,3 +223,68 @@ jobs:
         with:
           path: bazel-remote-data-overlay.tar
           key: ${{ steps.pr-cache-restore.outputs.cache-primary-key }}
+
+  # macOS can't run the docker-build-v2 images, so it builds natively with the
+  # same configure flags as docker-build-v2/scripts/configure.sh. Dependencies
+  # come from Homebrew and are linked dynamically, so the artifact only runs on
+  # a machine with the same formulae installed (true for synctest runners).
+  # Self-contained .app packaging is a separate step.
+  build-engine-macos:
+    if: github.repository == 'beyond-all-reason/RecoilEngine' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - target: arm64-macos
+            runs-on: macos-15
+          - target: amd64-macos
+            runs-on: macos-15-intel
+    name: Build ${{ matrix.system.target }} engine
+    runs-on: ${{ matrix.system.runs-on }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Engine automatic version naming needs full history.
+          fetch-depth: 0
+          submodules: recursive
+          path: src
+      - name: Install dependencies
+        run: |
+          brew install ccache cmake ninja sevenzip devil minizip sdl2-compat \
+            freetype fontconfig libogg libvorbis openal-soft xz
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ matrix.system.target }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.system.target }}-
+      - name: Configure
+        run: |
+          cmake -S src -B out -G Ninja \
+            -DCMAKE_INSTALL_PREFIX:PATH="$PWD/out/install" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DAI_EXCLUDE_REGEX="^CppTestAI$" \
+            -DUSERDOCS_PLAIN=ON \
+            -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG" \
+            -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG" \
+            ${{ inputs.cmake-options || '' }}
+      - name: Compile
+        run: cmake --build out --target install
+      - name: Package
+        run: |
+          base_name="recoil_$(git -C src describe --abbrev=7)_${{ matrix.system.target }}"
+          mkdir -p artifacts
+          cd out/install
+          7zz a -t7z -m0=lzma -mx=9 "$GITHUB_WORKSPACE/artifacts/${base_name}${{ inputs.package-suffix }}.7z" ./*
+      - name: Save
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-artifacts-${{ matrix.system.target }}-${{ inputs.package-suffix }}
+          path: ./artifacts
+          compression-level: 0  # already compressed

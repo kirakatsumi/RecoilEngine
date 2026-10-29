@@ -1,5 +1,6 @@
 # Runs the Beyond All Reason "synctest" (/luarules synctest) against an engine
-# commit on all supported platforms (amd64-linux, arm64-linux, amd64-windows).
+# commit on all supported platforms (amd64-linux, arm64-linux, amd64-windows,
+# arm64-macos, amd64-macos).
 #
 # This workflow looks up the most recent successful "Build Engine v2" run for
 # the target commit and downloads platform-specific artifacts. If no such run
@@ -56,7 +57,9 @@ jobs:
           json=$(jq -c -n '[
             {"platform": "amd64-linux",   "runs-on": "ubuntu-latest",    "bin-suffix": ""},
             {"platform": "arm64-linux",   "runs-on": "ubuntu-24.04-arm",  "bin-suffix": ""},
-            {"platform": "amd64-windows", "runs-on": "windows-latest",    "bin-suffix": ".exe"}
+            {"platform": "amd64-windows", "runs-on": "windows-latest",    "bin-suffix": ".exe"},
+            {"platform": "arm64-macos",   "runs-on": "macos-15",          "bin-suffix": ""},
+            {"platform": "amd64-macos",   "runs-on": "macos-15-intel",    "bin-suffix": ""}
           ]')
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
@@ -116,6 +119,16 @@ jobs:
           github-token: ${{ github.token }}
           path: engine-artifact
           merge-multiple: true
+
+      - name: Install runtime dependencies (macOS)
+        # macOS engine builds link Homebrew dylibs dynamically, see the
+        # build-engine-macos job in engine-build.yml.
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install sevenzip devil minizip sdl2-compat freetype fontconfig \
+            libogg libvorbis openal-soft xz
 
       - name: Extract install tree
         run: |

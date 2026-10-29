@@ -57,3 +57,39 @@ jobs:
             streflop_results_SSE_x86_64.txt
             streflop_10M_SSE_x86_64.bin
           retention-days: 90
+
+  # Apple clang must produce the same bits as GCC on Linux, on both CPU
+  # architectures, or macOS clients desync against everyone else.
+  streflop-sync-test-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: macos-15
+            mode: NEON
+            arch: arm64
+          - runs-on: macos-15-intel
+            mode: SSE
+            arch: x86_64
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -S tools/sync-test -DCMAKE_BUILD_TYPE=Release -DSTREFLOP_MODE=${{ matrix.mode }}
+
+      - name: Build
+        run: cmake --build build --target streflop-float-test -j$(sysctl -n hw.ncpu)
+
+      - name: Compare against checked-in references
+        run: |
+          ./build/streflop-float-test -n 10000 streflop_results_${{ matrix.mode }}_${{ matrix.arch }}_macos
+          for ref in tools/sync-test/reference/*.bin; do
+            echo "--- $ref ---"
+            python3 tools/sync-test/compare_results.py "$ref" streflop_results_${{ matrix.mode }}_${{ matrix.arch }}_macos.bin
+          done
+
+      - name: Large scale (2.6B tests, hash-only)
+        if: ${{ inputs.large_scale }}
+        run: ./build/streflop-float-test -n 100000000 --hash-only
