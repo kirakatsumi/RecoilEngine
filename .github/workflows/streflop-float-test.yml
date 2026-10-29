@@ -49,7 +49,9 @@ jobs:
       - name: Large scale (2.6B tests, hash-only, ~3 min)
         if: ${{ inputs.large_scale }}
         run: |
-          ./build/streflop-float-test -n 100000000 --hash-only
+          # --canonical-nan: NaN bits differ by compiler/CPU; with it, this hash
+          # must equal the macOS legs' hash (A3387E278B4AE238 at fb7bc3d).
+          ./build/streflop-float-test -n 100000000 --hash-only --canonical-nan
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -98,4 +100,4 @@ jobs:
 
       - name: Large scale (2.6B tests, hash-only)
         if: ${{ inputs.large_scale }}
-        run: ./build/streflop-float-test -n 100000000 --hash-only
+        run: ./build/streflop-float-test -n 100000000 --hash-only --canonical-nan
