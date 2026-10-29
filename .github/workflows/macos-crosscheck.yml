@@ -198,8 +198,15 @@ jobs:
             digest=$(jq -r '.digest // empty' "artifacts/synctest-$platform/bar-data/$HASH_FILE" 2>/dev/null || true)
             echo "$platform ${digest:-MISSING}"
           done | tee synchashes.txt
-          ! grep -qw MISSING synchashes.txt
-          test "$(awk '{print $2}' synchashes.txt | sort -u | wc -l)" -eq 1
+          # Explicit ifs: `set -e` ignores failures of `!`-negated commands.
+          if grep -qw MISSING synchashes.txt; then
+            echo "::error::sync hash missing on at least one platform"
+            exit 1
+          fi
+          if [ "$(awk '{print $2}' synchashes.txt | sort -u | wc -l)" -ne 1 ]; then
+            echo "::error::CROSS-PLATFORM DESYNC: digests differ"
+            exit 1
+          fi
           echo "OK: all platforms agree"
 
   float-test:
