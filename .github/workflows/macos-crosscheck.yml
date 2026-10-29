@@ -1,0 +1,222 @@
+# Fork-only check for the macOS port, not meant for upstream.
+#
+# Upstream's engine-build needs Namespace runners and R2 secrets, so this
+# workflow builds only the macOS engines here and reuses upstream's Linux and
+# Windows artifacts for the same base commit. The macOS branch adds no
+# simulation changes on top of that commit, so all five digests must match.
+name: macOS cross-platform check
+
+on:
+  push:
+    branches: [macos-crosscheck]
+  workflow_dispatch:
+    inputs:
+      upstream-run-id:
+        description: 'Upstream Build Engine v2 run with Linux/Windows artifacts'
+        type: string
+        default: '40864091519'
+
+permissions:
+  actions: read
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  MAP: "Jade Empress 1.41"
+  GAME: "Beyond All Reason test-30770-4e0b241"
+  HASH_FILE: "synctest_synchash.json"
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - target: arm64-macos
+            runs-on: macos-15
+          - target: amd64-macos
+            runs-on: macos-15-intel
+    name: Build ${{ matrix.system.target }} engine
+    runs-on: ${{ matrix.system.runs-on }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          path: src
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja sevenzip devil minizip sdl2-compat \
+            freetype fontconfig libogg libvorbis openal-soft xz
+      - name: Configure
+        run: |
+          cmake -S src -B out -G Ninja \
+            -DCMAKE_INSTALL_PREFIX:PATH="$PWD/out/install" \
+            -DAI_EXCLUDE_REGEX="^CppTestAI$" \
+            -DUSERDOCS_PLAIN=ON \
+            -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG" \
+            -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG"
+      - name: Compile
+        run: cmake --build out --target install
+      - name: Unit tests
+        run: |
+          cmake --build out --target tests
+          ctest --test-dir out --output-on-failure --timeout 300
+      - name: Package
+        run: |
+          base_name="recoil_$(git -C src describe --abbrev=7)_${{ matrix.system.target }}"
+          mkdir -p artifacts
+          cd out/install
+          7zz a -t7z -m0=lzma -mx=5 "$GITHUB_WORKSPACE/artifacts/${base_name}.7z" ./*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-artifacts-${{ matrix.system.target }}
+          path: ./artifacts
+          compression-level: 0
+
+  synctest:
+    needs: build-macos
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: amd64-linux,   runs-on: ubuntu-latest,    bin-suffix: ""}
+          - {platform: arm64-linux,   runs-on: ubuntu-24.04-arm, bin-suffix: ""}
+          - {platform: amd64-windows, runs-on: windows-latest,   bin-suffix: ".exe"}
+          - {platform: arm64-macos,   runs-on: macos-15,         bin-suffix: ""}
+          - {platform: amd64-macos,   runs-on: macos-15-intel,   bin-suffix: ""}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS engine (this run)
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: engine-artifacts-${{ matrix.platform }}*
+          path: engine-artifact
+          merge-multiple: true
+
+      - name: Download upstream engine (${{ matrix.platform }})
+        if: runner.os != 'macOS'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: engine-artifacts-${{ matrix.platform }}*
+          repository: beyond-all-reason/RecoilEngine
+          run-id: ${{ inputs.upstream-run-id || '40864091519' }}
+          github-token: ${{ github.token }}
+          path: engine-artifact
+          merge-multiple: true
+
+      - name: Install runtime dependencies (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install sevenzip devil minizip sdl2-compat freetype fontconfig \
+            libogg libvorbis openal-soft xz
+
+      - name: Extract install tree
+        run: |
+          mkdir -p install
+          sevenzip=$(command -v 7z || command -v 7zz || command -v 7za || true)
+          "$sevenzip" x engine-artifact/recoil_*_${{ matrix.platform }}*.7z -oinstall
+          ls install
+
+      - name: Restore BAR content cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            bar-data/pool
+            bar-data/packages
+            bar-data/maps
+          key: bar-data-${{ env.GAME }}-${{ env.MAP }}
+
+      - name: Fetch pinned BAR assets
+        run: |
+          ./install/pr-downloader${{ matrix.bin-suffix }} \
+              --filesystem-writepath "$PWD/bar-data" \
+              --download-game "$GAME" \
+              --download-map  "$MAP"
+        env:
+          PRD_RAPID_USE_STREAMER: "false"
+          PRD_RAPID_REPO_MASTER: "https://repos-cdn.beyondallreason.dev/repos.gz"
+          PRD_HTTP_SEARCH_URL: "https://files-cdn.beyondallreason.dev/find"
+
+      - name: Render startscript
+        run: |
+          sed -e "s/@VERSION@/${GAME##* }/g" -e "s/@MAPNAME@/$MAP/g" \
+              test/synctest/synctest-startscript.txt > startscript.txt
+
+      - name: Run synctest
+        run: |
+          ./install/spring-headless${{ matrix.bin-suffix }} --isolation \
+              --write-dir "$PWD/bar-data" startscript.txt 2>&1 | tee infolog.txt
+
+      - name: Assert sync-hash file produced
+        run: |
+          digest=$(jq -r '.digest // empty' "bar-data/$HASH_FILE")
+          test -n "$digest"
+          echo "Sync hash digest: $digest"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synctest-${{ matrix.platform }}
+          path: |
+            infolog.txt
+            bar-data/${{ env.HASH_FILE }}
+          if-no-files-found: ignore
+
+  cross-platform-check:
+    if: ${{ !cancelled() }}
+    needs: synctest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: synctest-*
+          path: artifacts
+      - name: Compare sync hashes across platforms
+        run: |
+          for platform in amd64-linux arm64-linux amd64-windows arm64-macos amd64-macos; do
+            digest=$(jq -r '.digest // empty' "artifacts/synctest-$platform/bar-data/$HASH_FILE" 2>/dev/null || true)
+            echo "$platform ${digest:-MISSING}"
+          done | tee synchashes.txt
+          ! grep -qw MISSING synchashes.txt
+          test "$(awk '{print $2}' synchashes.txt | sort -u | wc -l)" -eq 1
+          echo "OK: all platforms agree"
+
+  float-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runs-on: ubuntu-latest,  mode: SSE,  arch: x86_64}
+          - {runs-on: macos-15,       mode: NEON, arch: arm64}
+          - {runs-on: macos-15-intel, mode: SSE,  arch: x86_64}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: cmake -B build -S tools/sync-test -DCMAKE_BUILD_TYPE=Release -DSTREFLOP_MODE=${{ matrix.mode }}
+      - run: cmake --build build --target streflop-float-test
+      - name: Compare against checked-in references
+        run: |
+          ./build/streflop-float-test -n 10000 out
+          for ref in tools/sync-test/reference/*.bin; do
+            echo "--- $ref ---"
+            python3 tools/sync-test/compare_results.py "$ref" out.bin
+          done
+      - name: 2.6B tests, hash-only
+        run: ./build/streflop-float-test -n 100000000 --hash-only | tail -5
