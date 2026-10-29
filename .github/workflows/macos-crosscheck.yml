@@ -45,6 +45,8 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3G
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,12 +55,21 @@ jobs:
           path: src
       - name: Install dependencies
         run: |
-          brew install cmake ninja sevenzip devil minizip sdl2-compat \
+          brew install ccache cmake ninja sevenzip devil minizip sdl2-compat \
             freetype fontconfig libogg libvorbis openal-soft xz
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.system.target }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.system.target }}-
       - name: Configure
+        id: configure
         run: |
           cmake -S src -B out -G Ninja \
             -DCMAKE_INSTALL_PREFIX:PATH="$PWD/out/install" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DAI_EXCLUDE_REGEX="^(CppTestAI${{ matrix.system.ai-exclude }})$" \
             -DUSERDOCS_PLAIN=ON \
             -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
@@ -66,6 +77,16 @@ jobs:
             -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG"
       - name: Compile
         run: cmake --build out --target install
+      - name: Save ccache
+        # Saved even when later steps fail, so a rerun doesn't start cold.
+        if: always() && steps.configure.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.system.target }}-${{ github.run_id }}
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
       - name: Package
         run: |
           base_name="recoil_$(git -C src describe --abbrev=7)_${{ matrix.system.target }}"
@@ -85,10 +106,9 @@ jobs:
           cmake --build out --target tests
           ctest --test-dir out --output-on-failure --timeout 300 --repeat until-pass:3
 
-  synctest:
-    needs: build-macos
-    # A unit-test failure in build-macos must not hide the synctest result.
-    if: ${{ !cancelled() }}
+  # Linux and Windows reuse upstream's engine for the base commit, so they
+  # don't wait for the macOS builds.
+  synctest-upstream:
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 30
     strategy:
@@ -98,21 +118,10 @@ jobs:
           - {platform: amd64-linux,   runs-on: ubuntu-latest,    bin-suffix: ""}
           - {platform: arm64-linux,   runs-on: ubuntu-24.04-arm, bin-suffix: ""}
           - {platform: amd64-windows, runs-on: windows-latest,   bin-suffix: ".exe"}
-          - {platform: arm64-macos,   runs-on: macos-15,         bin-suffix: ""}
-          - {platform: amd64-macos,   runs-on: macos-15-intel,   bin-suffix: ""}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download macOS engine (this run)
-        if: runner.os == 'macOS'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: engine-artifacts-${{ matrix.platform }}*
-          path: engine-artifact
-          merge-multiple: true
-
       - name: Download upstream engine (${{ matrix.platform }})
-        if: runner.os != 'macOS'
         uses: actions/download-artifact@v4
         with:
           pattern: engine-artifacts-${{ matrix.platform }}*
@@ -182,9 +191,92 @@ jobs:
             bar-data/${{ env.HASH_FILE }}
           if-no-files-found: ignore
 
+
+  synctest-macos:
+    needs: build-macos
+    # A unit-test failure in build-macos must not hide the synctest result.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: arm64-macos,   runs-on: macos-15,         bin-suffix: ""}
+          - {platform: amd64-macos,   runs-on: macos-15-intel,   bin-suffix: ""}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS engine (this run)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: engine-artifacts-${{ matrix.platform }}*
+          path: engine-artifact
+          merge-multiple: true
+
+      - name: Install runtime dependencies (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          brew install sevenzip devil minizip sdl2-compat freetype fontconfig \
+            libogg libvorbis openal-soft xz
+
+      - name: Extract install tree
+        run: |
+          mkdir -p install
+          sevenzip=$(command -v 7z || command -v 7zz || command -v 7za || true)
+          "$sevenzip" x engine-artifact/recoil_*_${{ matrix.platform }}*.7z -oinstall
+          ls install
+
+      - name: Restore BAR content cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            bar-data/pool
+            bar-data/packages
+            bar-data/maps
+          key: bar-data-${{ env.GAME }}-${{ env.MAP }}
+
+      - name: Fetch pinned BAR assets
+        run: |
+          ./install/pr-downloader${{ matrix.bin-suffix }} \
+              --filesystem-writepath "$PWD/bar-data" \
+              --download-game "$GAME" \
+              --download-map  "$MAP"
+        env:
+          PRD_RAPID_USE_STREAMER: "false"
+          PRD_RAPID_REPO_MASTER: "https://repos-cdn.beyondallreason.dev/repos.gz"
+          PRD_HTTP_SEARCH_URL: "https://files-cdn.beyondallreason.dev/find"
+
+      - name: Render startscript
+        run: |
+          sed -e "s/@VERSION@/${GAME##* }/g" -e "s/@MAPNAME@/$MAP/g" \
+              test/synctest/synctest-startscript.txt > startscript.txt
+
+      - name: Run synctest
+        run: |
+          ./install/spring-headless${{ matrix.bin-suffix }} --isolation \
+              --write-dir "$PWD/bar-data" startscript.txt 2>&1 | tee infolog.txt
+
+      - name: Assert sync-hash file produced
+        run: |
+          digest=$(jq -r '.digest // empty' "bar-data/$HASH_FILE")
+          test -n "$digest"
+          echo "Sync hash digest: $digest"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synctest-${{ matrix.platform }}
+          path: |
+            infolog.txt
+            bar-data/${{ env.HASH_FILE }}
+          if-no-files-found: ignore
+
   cross-platform-check:
     if: ${{ !cancelled() }}
-    needs: synctest
+    needs: [synctest-upstream, synctest-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -232,4 +324,4 @@ jobs:
             python3 tools/sync-test/compare_results.py "$ref" out.bin
           done
       - name: 2.6B tests, hash-only
-        run: ./build/streflop-float-test -n 100000000 --hash-only | tail -5
+        run: ./build/streflop-float-test -n 100000000 --hash-only | grep -E "Hash:|Tests:|Mode:"
