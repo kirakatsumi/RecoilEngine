@@ -39,6 +39,7 @@ jobs:
             runs-on: macos-15
           - target: amd64-macos
             runs-on: macos-15-intel
+            ai-exclude: "|BARb"
     name: Build ${{ matrix.system.target }} engine
     runs-on: ${{ matrix.system.runs-on }}
     env:
@@ -58,7 +59,7 @@ jobs:
         run: |
           cmake -S src -B out -G Ninja \
             -DCMAKE_INSTALL_PREFIX:PATH="$PWD/out/install" \
-            -DAI_EXCLUDE_REGEX="^CppTestAI$" \
+            -DAI_EXCLUDE_REGEX="^(CppTestAI${{ matrix.system.ai-exclude }})$" \
             -DUSERDOCS_PLAIN=ON \
             -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
             -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG" \
