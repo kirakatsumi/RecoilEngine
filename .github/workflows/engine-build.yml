@@ -239,6 +239,9 @@ jobs:
             runs-on: macos-15
           - target: amd64-macos
             runs-on: macos-15-intel
+            # BARb's bundled AngelScript has x86-64 inline asm with a CFI
+            # directive Apple's assembler rejects; skip it until fixed there.
+            ai-exclude: "|BARb"
     name: Build ${{ matrix.system.target }} engine
     runs-on: ${{ matrix.system.runs-on }}
     env:
@@ -268,7 +271,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX:PATH="$PWD/out/install" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DAI_EXCLUDE_REGEX="^CppTestAI$" \
+            -DAI_EXCLUDE_REGEX="^(CppTestAI${{ matrix.system.ai-exclude }})$" \
             -DUSERDOCS_PLAIN=ON \
             -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
             -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG" \
