@@ -1,0 +1,59 @@
+# Fork-only: 2.6 billion streflop results hashed with --canonical-nan on
+# Linux, arm64 macOS and Intel macOS. The three hashes must be identical.
+name: Float test, 2.6B canonical-NaN hash
+
+on:
+  push:
+    branches: [macos-floatcheck]
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  hash:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: linux-amd64, runs-on: ubuntu-latest,  mode: SSE}
+          - {name: macos-arm64, runs-on: macos-15,       mode: NEON}
+          - {name: macos-amd64, runs-on: macos-15-intel, mode: SSE}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: cmake -B build -S tools/sync-test -DCMAKE_BUILD_TYPE=Release -DSTREFLOP_MODE=${{ matrix.mode }}
+      - run: cmake --build build --target streflop-float-test
+      - name: 2.6B tests, canonical-NaN hash
+        run: |
+          ./build/streflop-float-test -n 100000000 --hash-only --canonical-nan | tee out.txt
+          grep -E "^ +Hash: " out.txt | awk '{print $2}' > hash-${{ matrix.name }}.txt
+          echo "${{ matrix.name }} $(cat hash-${{ matrix.name }}.txt)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hash-${{ matrix.name }}
+          path: hash-${{ matrix.name }}.txt
+
+  compare:
+    needs: hash
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hash-*
+          merge-multiple: true
+      - name: Compare
+        run: |
+          for n in linux-amd64 macos-arm64 macos-amd64; do
+            echo "$n $(cat hash-$n.txt 2>/dev/null || echo MISSING)"
+          done | tee hashes.txt
+          if grep -qw MISSING hashes.txt; then
+            echo "::error::hash missing"; exit 1
+          fi
+          if [ "$(awk '{print $2}' hashes.txt | sort -u | wc -l)" -ne 1 ]; then
+            echo "::error::hashes differ"; exit 1
+          fi
+          echo "OK: identical on all three"
