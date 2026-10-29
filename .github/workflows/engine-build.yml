@@ -239,9 +239,9 @@ jobs:
             runs-on: macos-15
           - target: amd64-macos
             runs-on: macos-15-intel
-            # BARb's bundled AngelScript has x86-64 inline asm with a CFI
-            # directive Apple's assembler rejects; skip it until fixed there.
-            ai-exclude: "|BARb"
+            # BARb and CircuitAI bundle AngelScript, whose x86-64 inline asm has a CFI
+            # directive Apple's assembler rejects; skip them until fixed upstream.
+            ai-exclude: "|BARb|CircuitAI"
     name: Build ${{ matrix.system.target }} engine
     runs-on: ${{ matrix.system.runs-on }}
     env:
