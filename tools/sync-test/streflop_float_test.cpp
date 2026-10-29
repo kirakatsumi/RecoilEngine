@@ -2,7 +2,7 @@
 // Generates deterministic floating-point results for cross-architecture comparison.
 // See STREFLOP_FLOAT_TEST_PROMPT.md for specification.
 //
-// Usage: streflop-float-test [-n NUM_INPUTS] [--hash-only] [--no-text] [OUTPUT_PREFIX]
+// Usage: streflop-float-test [-n NUM_INPUTS] [--hash-only] [--canonical-nan] [--no-text] [OUTPUT_PREFIX]
 //   -n NUM_INPUTS   Number of random inputs to generate (default: 10000)
 //   --hash-only     Compute and print hash only, no file output (for billion-scale)
 //   --no-text       Skip text output (auto-set when N > 10000)
@@ -95,6 +95,10 @@ struct StreamState {
 	FILE* bin_fp = nullptr;
 	FILE* txt_fp = nullptr;
 	FNV1a hasher;
+	// Hash every NaN as the same value. NaN sign and payload bits differ between
+	// compilers and CPUs (compare_results.py already treats NaN == NaN), so
+	// without this the hash never matches across architectures.
+	bool canonical_nan = false;
 	uint32_t count = 0;
 	long count_file_offset = 0;  // position of count field in binary for seek-back
 	uint64_t progress_interval = 1000000; // report every N tests
@@ -147,9 +151,17 @@ struct StreamState {
 		uint32_t id = ++count;
 
 		// Hash: id + prec + result_bits (same data as binary record)
+		uint64_t hash_bits = result_bits;
+		if (canonical_nan) {
+			const bool is_nan = (prec == 'F')
+				? ((result_bits & 0x7F800000u) == 0x7F800000u && (result_bits & 0x007FFFFFu) != 0)
+				: ((result_bits & 0x7FF0000000000000ull) == 0x7FF0000000000000ull && (result_bits & 0x000FFFFFFFFFFFFFull) != 0);
+			if (is_nan)
+				hash_bits = (prec == 'F') ? 0x7FC00000u : 0x7FF8000000000000ull;
+		}
 		hasher.feed_u32(id);
 		hasher.feed_u8(static_cast<uint8_t>(prec));
-		hasher.feed_u64(result_bits);
+		hasher.feed_u64(hash_bits);
 
 		// Binary output
 		if (bin_fp) {
@@ -571,6 +583,7 @@ static void print_usage(const char* argv0) {
 	printf("Options:\n");
 	printf("  -n NUM_INPUTS   Number of random inputs (default: 10000)\n");
 	printf("  --hash-only     Compute hash only, no file output\n");
+	printf("  --canonical-nan Hash all NaNs alike, for cross-architecture hash comparison\n");
 	printf("  --no-text       Skip text file output\n");
 	printf("\n");
 	printf("Scale guide:\n");
@@ -600,6 +613,8 @@ int main(int argc, char* argv[]) {
 			hash_only = true;
 		} else if (strcmp(argv[i], "--no-text") == 0) {
 			write_text = false;
+		} else if (strcmp(argv[i], "--canonical-nan") == 0) {
+			g_stream.canonical_nan = true;
 		} else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
 			print_usage(argv[0]);
 			return 0;
